@@ -1,0 +1,436 @@
+/* ====================================================
+   Vaccine Management System - Global Styles
+   ==================================================== */
+
+/* ----- Root Variables ----- */
+:root {
+  --primary-color: #007bff;
+  --primary-dark: #0056b3;
+  --secondary-color: #6c757d;
+  --success-color: #28a745;
+  --danger-color: #dc3545;
+  --warning-color: #ffc107;
+  --info-color: #17a2b8;
+  --light-gray: #f8f9fa;
+  --dark-gray: #343a40;
+  --border-color: #dee2e6;
+  --shadow-sm: 0 0.125rem 0.25rem rgba(0, 0, 0, 0.075);
+  --shadow-md: 0 0.5rem 1rem rgba(0, 0, 0, 0.15);
+  --transition-speed: 0.2s;
+}
+
+/* ----- Global Reset ----- */
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+body {
+  font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+  background-color: #f4f6f9;
+  color: #333;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* ----- Typography ----- */
+h1, h2, h3, h4, h5, h6 {
+  font-weight: 600;
+  margin-bottom: 1rem;
+}
+
+a {
+  text-decoration: none;
+  color: var(--primary-color);
+  transition: color var(--transition-speed);
+}
+
+a:hover {
+  color: var(--primary-dark);
+}
+
+/* ----- Layout ----- */
+.container, .container-fluid {
+  padding-left: 1rem;
+  padding-right: 1rem;
+}
+
+.min-vh-100 {
+  min-height: 100vh;
+}
+
+.flex-grow-1 {
+  flex-grow: 1;
+}
+
+/* ----- Cards ----- */
+.card {
+  border: none;
+  border-radius: 0.75rem;
+  box-shadow: var(--shadow-sm);
+  transition: transform var(--transition-speed), box-shadow var(--transition-speed);
+  margin-bottom: 1.5rem;
+  background: white;
+}
+
+.card:hover {
+  box-shadow: var(--shadow-md);
+}
+
+.card-header {
+  background-color: white;
+  border-bottom: 1px solid var(--border-color);
+  padding: 1rem 1.25rem;
+  font-weight: 600;
+  border-radius: 0.75rem 0.75rem 0 0 !important;
+}
+
+.card-footer {
+  background-color: white;
+  border-top: 1px solid var(--border-color);
+  padding: 0.75rem 1.25rem;
+}
+
+/* ----- Tables ----- */
+.table {
+  margin-bottom: 0;
+  border-color: var(--border-color);
+}
+
+.table thead th {
+  background-color: var(--light-gray);
+  border-bottom: 2px solid var(--border-color);
+  font-weight: 600;
+  padding: 0.75rem;
+  vertical-align: middle;
+}
+
+.table tbody td {
+  padding: 0.75rem;
+  vertical-align: middle;
+  border-color: var(--border-color);
+}
+
+.table-hover tbody tr:hover {
+  background-color: rgba(0, 123, 255, 0.05);
+}
+
+.table-responsive {
+  border-radius: 0.5rem;
+  overflow-x: auto;
+}
+
+/* ----- Buttons ----- */
+.btn {
+  border-radius: 0.5rem;
+  padding: 0.5rem 1rem;
+  font-weight: 500;
+  transition: all var(--transition-speed);
+}
+
+.btn-primary {
+  background-color: var(--primary-color);
+  border-color: var(--primary-color);
+}
+
+.btn-primary:hover {
+  background-color: var(--primary-dark);
+  border-color: var(--primary-dark);
+}
+
+.btn-success {
+  background-color: var(--success-color);
+  border-color: var(--success-color);
+}
+
+.btn-danger {
+  background-color: var(--danger-color);
+  border-color: var(--danger-color);
+}
+
+.btn-warning {
+  background-color: var(--warning-color);
+  border-color: var(--warning-color);
+  color: #212529;
+}
+
+.btn-sm {
+  padding: 0.25rem 0.5rem;
+  font-size: 0.875rem;
+}
+
+.btn-lg {
+  padding: 0.75rem 1.5rem;
+  font-size: 1rem;
+}
+
+/* ----- Form Controls ----- */
+.form-control, .form-select {
+  border-radius: 0.5rem;
+  border: 1px solid var(--border-color);
+  padding: 0.5rem 0.75rem;
+  transition: border-color var(--transition-speed), box-shadow var(--transition-speed);
+}
+
+.form-control:focus, .form-select:focus {
+  border-color: var(--primary-color);
+  box-shadow: 0 0 0 0.2rem rgba(0, 123, 255, 0.25);
+}
+
+.form-label {
+  font-weight: 500;
+  margin-bottom: 0.25rem;
+}
+
+/* ----- Alerts ----- */
+.alert {
+  border-radius: 0.5rem;
+  border: none;
+  padding: 0.75rem 1.25rem;
+}
+
+.alert-success {
+  background-color: #d4edda;
+  color: #155724;
+}
+
+.alert-danger {
+  background-color: #f8d7da;
+  color: #721c24;
+}
+
+.alert-warning {
+  background-color: #fff3cd;
+  color: #856404;
+}
+
+.alert-info {
+  background-color: #d1ecf1;
+  color: #0c5460;
+}
+
+/* ----- Badges ----- */
+.badge {
+  padding: 0.35rem 0.65rem;
+  border-radius: 50rem;
+  font-weight: 500;
+  font-size: 0.75rem;
+}
+
+/* ----- Modals ----- */
+.modal-content {
+  border-radius: 0.75rem;
+  border: none;
+  box-shadow: var(--shadow-md);
+}
+
+.modal-header {
+  border-bottom: 1px solid var(--border-color);
+  padding: 1rem 1.25rem;
+}
+
+.modal-footer {
+  border-top: 1px solid var(--border-color);
+  padding: 0.75rem 1.25rem;
+}
+
+/* ----- Navbar ----- */
+.navbar {
+  box-shadow: var(--shadow-sm);
+  padding: 0.75rem 0;
+}
+
+.navbar-brand {
+  font-weight: 700;
+  font-size: 1.25rem;
+}
+
+.navbar-nav .nav-link {
+  padding: 0.5rem 1rem;
+  transition: opacity var(--transition-speed);
+}
+
+.navbar-nav .nav-link:hover {
+  opacity: 0.8;
+}
+
+/* ----- Footer ----- */
+footer {
+  margin-top: auto;
+  background-color: var(--dark-gray);
+  color: white;
+}
+
+footer a {
+  color: rgba(255, 255, 255, 0.8);
+}
+
+footer a:hover {
+  color: white;
+}
+
+/* ----- Spinners ----- */
+.spinner-border {
+  vertical-align: middle;
+}
+
+/* ----- Google Translate Widget ----- */
+#google_translate_element {
+  margin-top: 0.25rem;
+}
+
+.goog-te-combo {
+  border-radius: 0.5rem;
+  padding: 0.25rem 0.5rem;
+  border: 1px solid var(--border-color);
+}
+
+/* ----- Custom Scrollbar ----- */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: var(--light-gray);
+  border-radius: 10px;
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--secondary-color);
+  border-radius: 10px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--dark-gray);
+}
+
+/* ----- Print Styles (for Certificates) ----- */
+@media print {
+  .navbar, .footer, button, .btn, .no-print {
+    display: none !important;
+  }
+  
+  body {
+    background-color: white;
+    padding: 0;
+    margin: 0;
+  }
+  
+  .container {
+    max-width: 100%;
+    padding: 0;
+    margin: 0;
+  }
+  
+  .card {
+    box-shadow: none;
+    border: 1px solid #ddd;
+  }
+}
+
+/* ----- Responsive Utilities ----- */
+@media (max-width: 768px) {
+  .table thead {
+    display: none;
+  }
+  
+  .table-responsive-stack {
+    display: block;
+    width: 100%;
+  }
+  
+  .card-header h5 {
+    font-size: 1rem;
+  }
+  
+  .display-4 {
+    font-size: 2rem;
+  }
+}
+
+@media (max-width: 576px) {
+  .container, .container-fluid {
+    padding-left: 0.75rem;
+    padding-right: 0.75rem;
+  }
+  
+  .btn {
+    width: 100%;
+    margin-bottom: 0.5rem;
+  }
+  
+  .btn-group {
+    flex-direction: column;
+  }
+}
+
+/* ----- Dashboard Cards (Admin) ----- */
+.dashboard-card {
+  text-align: center;
+  padding: 1.5rem;
+  border-radius: 0.75rem;
+  color: white;
+}
+
+.dashboard-card h3 {
+  font-size: 2.5rem;
+  margin-bottom: 0;
+}
+
+.dashboard-card p {
+  margin-bottom: 0;
+  opacity: 0.9;
+}
+
+/* ----- Vaccine Status Colors ----- */
+.status-pending {
+  color: var(--warning-color);
+}
+
+.status-completed {
+  color: var(--success-color);
+}
+
+.status-missed {
+  color: var(--danger-color);
+}
+
+.status-scheduled {
+  color: var(--primary-color);
+}
+
+/* ----- Allergy Highlight ----- */
+.allergy-warning {
+  color: var(--danger-color);
+  font-weight: bold;
+  background-color: #f8d7da;
+  padding: 0.25rem 0.5rem;
+  border-radius: 0.25rem;
+}
+
+/* ----- Table Row for Allergies ----- */
+tr.allergy-row {
+  border-left: 3px solid var(--danger-color);
+}
+
+/* ----- Animations ----- */
+.fade-enter {
+  opacity: 0;
+}
+
+.fade-enter-active {
+  opacity: 1;
+  transition: opacity 200ms;
+}
+
+.fade-exit {
+  opacity: 1;
+}
+
+.fade-exit-active {
+  opacity: 0;
+  transition: opacity 200ms;
+}
