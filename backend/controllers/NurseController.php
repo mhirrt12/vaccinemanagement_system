@@ -63,66 +63,88 @@ class NurseController {
      * Get all pending parent registrations for verification
      * GET /api/nurse/pending-parents
      */
-    public function getPendingParents() {
-        global $authPayload;
-        $nurseId = $authPayload['user_id'];
-        
-        $pending = $this->userModel->getPendingParents();
-        Response::success($pending);
-    }
+  public function getPendingChildren() {
+    $db = Database::getConnection();
+    $stmt = $db->prepare("
+        SELECT c.*, u.name as parent_name, u.phone as parent_phone
+        FROM children c
+        JOIN users u ON c.parent_id = u.id
+        WHERE c.status = 'pending'
+        ORDER BY c.created_at ASC
+    ");
+    $stmt->execute();
+    $children = $stmt->fetchAll();
+    Response::success($children);
+}
     
     /**
      * Approve a parent registration (verify)
      * POST /api/nurse/approve-parent/{parentId}
      */
-    public function approveParent($parentId) {
-        global $authPayload;
-        $nurseId = $authPayload['user_id'];
-        
-        // Get parent details
-        $parent = $this->userModel->findById($parentId);
-        if (!$parent || $parent['role_id'] != 1) {
-            Response::notFound('Parent not found');
-            return;
-        }
-        
-        if ($parent['is_verified']) {
-            Response::badRequest('Parent already approved');
-            return;
-        }
-        
-        // Approve parent
-        $approved = $this->userModel->approveParent($parentId, $nurseId);
-        if (!$approved) {
-            Response::internalError('Failed to approve parent');
-            return;
-        }
-        
-        // Get all children of this parent
-        $children = $this->childModel->getChildrenByParent($parentId);
-        foreach ($children as $child) {
-            // Assign nurse to child (round-robin or use this nurse if preferred)
-            $this->assignmentService->assignNurse($child['id'], $nurseId);
-            // Mark child as verified
-            $this->childModel->verifyChild($child['id']);
-            
-            // Schedule appointments based on DOB (if not already done)
-            $this->scheduleAppointmentsForChild($child['id'], $child['dob']);
-        }
-        
-        // Send notification to parent
-        $this->notificationService->createNotification(
-            $parentId,
-            null,
-            'Account Approved',
-            'Your account has been verified by nurse. You can now log in and view your children\'s vaccination schedule.',
-            'approval'
-        );
-        
-        Logger::info("Parent approved by nurse", $nurseId, ['parent_id' => $parentId]);
-        Response::success(null, 'Parent approved successfully. Children assigned to nurses.');
+   public function approveChild($childId) {
+    global $authPayload;
+    $nurseId = $authPayload['user_id'];
+    $db = Database::getConnection();
+
+    // Check child exists and is pending
+    $stmt = $db->prepare("SELECT * FROM children WHERE id = ? AND status = 'pending'");
+    $stmt->execute([$childId]);
+    $child = $stmt->fetch();
+    if (!$child) {
+        Response::notFound('Child not found or already processed');
+        return;
     }
-    
+
+    // Approve child
+    $stmt = $db->prepare("UPDATE children SET status = 'approved', approved_by_nurse_id = ?, approved_at = NOW() WHERE id = ?");
+    $stmt->execute([$nurseId, $childId]);
+
+    // Generate vaccination schedule based on DOB
+    $scheduler = new AppointmentScheduler();
+    $generated = $scheduler->generateScheduleForChild($childId, $child['dob']);
+
+    // Process historical vaccines (mark as completed with notes)
+    if (!empty($child['pending_historical_vaccines'])) {
+        $vaccineIds = explode(',', $child['pending_historical_vaccines']);
+        foreach ($vaccineIds as $vaccineId) {
+            // Insert completed appointment with current date and note 'Historical'
+            $db->prepare("INSERT INTO appointments (child_id, vaccine_id, status, scheduled_date, given_date, notes)
+                          VALUES (?, ?, 'completed', CURDATE(), CURDATE(), 'Historical - previously given elsewhere')")
+               ->execute([$childId, $vaccineId]);
+        }
+    }
+
+    // Auto assign nurse (same as before, pick least loaded)
+    $nurseStmt = $db->prepare("
+        SELECT u.id, COUNT(na.child_id) as assigned_count
+        FROM users u
+        LEFT JOIN nurse_assignments na ON u.id = na.nurse_id AND na.end_date IS NULL
+        WHERE u.role = 'nurse' AND u.status = 'active'
+        GROUP BY u.id
+        ORDER BY assigned_count ASC
+        LIMIT 1
+    ");
+    $nurseStmt->execute();
+    $assignedNurse = $nurseStmt->fetch();
+    if ($assignedNurse) {
+        $db->prepare("INSERT INTO nurse_assignments (nurse_id, child_id, assigned_at) VALUES (?, ?, NOW())")
+           ->execute([$assignedNurse['id'], $childId]);
+    }
+
+    // Notify parent
+    $notif = new NotificationService();
+    $notif->createNotification(
+        $child['parent_id'],
+        $childId,
+        'Child Registration Approved',
+        "Your child {$child['name']} ({$child['unique_child_id']}) has been approved. Full vaccination schedule is now available.",
+        'child_approved'
+    );
+
+    Logger::info("Child registration approved", $nurseId, ['child_id' => $childId]);
+    Response::success(null, 'Child approved successfully');
+}
+
     /**
      * Get all children assigned to this nurse
      * GET /api/nurse/my-children
@@ -160,6 +182,38 @@ class NurseController {
         Response::success($children);
     }
     
+
+
+    public function rejectChild($childId) {
+    global $authPayload;
+    $nurseId = $authPayload['user_id'];
+    $db = Database::getConnection();
+
+    $stmt = $db->prepare("SELECT * FROM children WHERE id = ? AND status = 'pending'");
+    $stmt->execute([$childId]);
+    $child = $stmt->fetch();
+    if (!$child) {
+        Response::notFound('Child not found or already processed');
+        return;
+    }
+
+    // Delete or mark as rejected (better to add a 'rejected' status)
+    $db->prepare("UPDATE children SET status = 'rejected', approved_by_nurse_id = ?, approved_at = NOW() WHERE id = ?")
+       ->execute([$nurseId, $childId]);
+
+    // Notify parent
+    $notif = new NotificationService();
+    $notif->createNotification(
+        $child['parent_id'],
+        $childId,
+        'Child Registration Rejected',
+        "Your child {$child['name']} registration was not approved. Please contact the health center.",
+        'child_rejected'
+    );
+
+    Logger::info("Child registration rejected", $nurseId, ['child_id' => $childId]);
+    Response::success(null, 'Child rejected');
+}
     /**
      * Register a walk-in child (with optional parent creation)
      * POST /api/nurse/walkin

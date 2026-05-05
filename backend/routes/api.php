@@ -76,7 +76,10 @@ $router->get('/parent/child/{childId}/certificate', 'ParentController', 'downloa
 $router->get('/parent/notifications', 'ParentController', 'getNotifications');
 $router->post('/parent/notifications/{notificationId}/read', 'ParentController', 'markNotificationRead');
 $router->get('/parent/upcoming-appointments', 'ParentController', 'getUpcomingAppointments');
-
+// ==================== PARENT-SPECIFIC ROUTES ====================
+$router->get('/parent/children', 'ParentController', 'getChildren');
+$router->post('/parent/child', 'ParentController', 'addChild');               // ✅ NEW
+$router->get('/parent/child/{childId}/schedule', 'ParentController', 'getChildSchedule');
 // ==================== NURSE-SPECIFIC ROUTES ====================
 $router->get('/nurse/pending-parents', 'NurseController', 'getPendingParents');
 $router->post('/nurse/approve-parent/{parentId}', 'NurseController', 'approveParent');
@@ -90,7 +93,12 @@ $router->post('/nurse/generate-report', 'NurseController', 'generateReport');
 $router->post('/nurse/approve-certificate/{certificateId}', 'NurseController', 'approveCertificate');
 $router->get('/nurse/upcoming-appointments', 'NurseController', 'getUpcomingAppointments');
 $router->post('/nurse/child/{childId}/notes', 'NurseController', 'addChildNotes');
-
+$router->get('/nurse/pending-children', 'NurseController', 'getPendingChildren');
+$router->post('/nurse/approve-child/{childId}', 'NurseController', 'approveChild');
+$router->post('/nurse/reject-child/{childId}', 'NurseController', 'rejectChild');
+$router->get('/nurse/pending-children', 'NurseController', 'getPendingChildren');
+$router->post('/nurse/approve-child/{childId}', 'NurseController', 'approveChild');
+$router->post('/nurse/reject-child/{childId}', 'NurseController', 'rejectChild');
 // ==================== ADMIN-SPECIFIC ROUTES ====================
 
 // Dashboard statistics

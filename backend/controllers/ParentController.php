@@ -52,51 +52,106 @@ class ParentController {
      * Get all children for the authenticated parent
      * GET /api/parent/children
      */
-    public function getChildren() {
-        global $authPayload;
-        $parentId = $authPayload['user_id'];
-        
-        $children = $this->childModel->getChildrenByParent($parentId);
-        
-        // Enrich with additional data: vaccine progress, next appointment, assigned nurse
-        foreach ($children as &$child) {
-            // Get vaccination progress (percentage of completed vaccines)
-            $appointments = $this->appointmentModel->getByChild($child['id']);
-            $total = count($appointments);
-            $completed = 0;
-            $nextAppointment = null;
-            foreach ($appointments as $app) {
-                if ($app['status'] === 'completed') $completed++;
-                if (!$nextAppointment && $app['status'] === 'pending' && $app['scheduled_date'] >= date('Y-m-d')) {
-                    $nextAppointment = $app;
-                }
-            }
-            $child['vaccine_progress'] = $total > 0 ? round(($completed / $total) * 100) : 0;
-            $child['next_appointment_date'] = $nextAppointment ? $nextAppointment['scheduled_date'] : null;
-            $child['next_vaccine_name'] = $nextAppointment ? $nextAppointment['vaccine_name'] : null;
-            
-            // Get assigned nurse
-            $assignment = $this->nurseAssignmentModel->getByChild($child['id']);
-            if ($assignment) {
-                $nurse = $this->userModel->findById($assignment['nurse_id']);
-                $child['assigned_nurse'] = $nurse ? [
-                    'id' => $nurse['id'],
-                    'name' => $nurse['name'],
-                    'phone' => $nurse['phone'],
-                    'email' => $nurse['email']
-                ] : null;
-            } else {
-                $child['assigned_nurse'] = null;
-            }
-        }
-        
-        Response::success($children);
-    }
+  public function getChildren() {
+    global $authPayload;
+    $parentId = $authPayload['user_id'];
+
+    // Only fetch approved children
+    $children = $this->childModel->getChildrenByParent($parentId, 'approved'); // need to update model slightly
+    // ... rest of the method stays the same
+}
     
     /**
      * Get vaccination roadmap (schedule) for a specific child
      * GET /api/parent/child/{childId}/schedule
      */
+
+    /**
+ * Register a new child for the authenticated parent
+ * POST /api/parent/child
+ * Input: { name, dob, gender, blood_type, allergies, birth_weight, delivery_type, birth_place }
+ */
+/**
+ * Register a new child for the authenticated parent
+ * POST /api/parent/child
+ * Input: { name, dob, gender, blood_type, allergies, birth_weight, delivery_type, birth_place }
+ */
+/**
+ * Register a new child for the authenticated parent
+ * POST /api/parent/child
+ * Input: { name, dob, gender, blood_type, allergies, birth_weight, delivery_type, birth_place }
+ */
+/**
+ * Register a new child for the authenticated parent (pending nurse approval)
+ * POST /api/parent/child
+ * Input: { name, dob, gender, blood_type, allergies, birth_weight, delivery_type, birth_place, historical_vaccines: [1,3] }
+ */
+public function addChild()
+{
+    global $authPayload;
+    $parentId = $authPayload['user_id'];
+    $input = json_decode(file_get_contents('php://input'), true);
+
+    // --- Validation ---
+    $required = ['name', 'dob', 'gender'];
+    foreach ($required as $field) {
+        if (empty($input[$field])) {
+            Response::badRequest("Missing required field: $field");
+            return;
+        }
+    }
+    if (!empty($input['dob']) && strtotime($input['dob']) > time()) {
+        Response::badRequest('Date of birth cannot be in the future');
+        return;
+    }
+
+    // --- Generate unique child ID ---
+    $db = Database::getConnection();
+    $date = date('Ymd');
+    $stmt = $db->prepare("SELECT COUNT(*) FROM children WHERE unique_child_id LIKE ?");
+    $stmt->execute(["CHLD-$date-%"]);
+    $count = $stmt->fetchColumn() + 1;
+    $uniqueChildId = sprintf("CHLD-%s-%04d", $date, $count);
+
+    // -> Store historical vaccine IDs as comma-separated string (or JSON)
+    $historicalVaccines = '';
+    if (!empty($input['historical_vaccines']) && is_array($input['historical_vaccines'])) {
+        $historicalVaccines = implode(',', array_map('intval', $input['historical_vaccines']));
+    }
+
+    // --- Insert child with pending status ---
+    $sql = "INSERT INTO children 
+            (parent_id, name, dob, gender, blood_type, allergies, birth_weight, delivery_type, birth_place, unique_child_id, status, pending_historical_vaccines, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, NOW())";
+    $stmt = $db->prepare($sql);
+    $success = $stmt->execute([
+        $parentId,
+        $input['name'],
+        $input['dob'],
+        $input['gender'],
+        $input['blood_type'] ?? null,
+        $input['allergies'] ?? null,
+        $input['birth_weight'] ?? null,
+        $input['delivery_type'] ?? 'Normal',
+        $input['birth_place'] ?? null,
+        $uniqueChildId,
+        $historicalVaccines
+    ]);
+
+    if (!$success) {
+        Response::internalError('Failed to register child');
+        return;
+    }
+
+    $childId = $db->lastInsertId();
+
+    // --- Log the pending registration ---
+    Logger::info("Child registration submitted (pending nurse approval)", $parentId, ['child_id' => $childId, 'unique_id' => $uniqueChildId]);
+
+    // --- Return a confirmation message ---
+    Response::success(null, 'Child registration submitted successfully. It will be reviewed by a nurse. You will be notified once approved.', 201);
+}
+
     public function getChildSchedule($childId) {
         global $authPayload;
         $parentId = $authPayload['user_id'];

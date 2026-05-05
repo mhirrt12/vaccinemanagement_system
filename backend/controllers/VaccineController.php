@@ -31,7 +31,7 @@ class VaccineController {
      * Query params: is_active (optional, default true)
      */
     public function getAll() {
-        $isActive = isset($_GET['is_active']) ? filter_var($_GET['is_active'], FILTER_VALIDATE_BOOLEAN) : true;
+     $isActive = isset($_GET['is_active']) ? filter_var($_GET['is_active'], FILTER_VALIDATE_BOOLEAN) : true;
         
         $db = Database::getConnection();
         $sql = "SELECT * FROM vaccines WHERE is_active = ? ORDER BY days_from_birth ASC";
