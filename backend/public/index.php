@@ -848,38 +848,125 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && preg_match('#^/api/certificates/adm
     $stmt->execute([$cert['child_id']]);
     $appts = $stmt->fetchAll();
 
-    // 4. Ethiopian‑style certificate HTML
-   $kebele = "04";
-   $woreda = "Menatabiya";
-   $zone   = "Debre Birhan";
-   $region = "Amhara Region";
+    // 4. Ethiopian‑style certificate HTML (improved CSS for signature section)
+    $kebele = "04";
+    $woreda = "Menatabiya";
+    $zone   = "Debre Birhan";
+    $region = "Amhara Region";
+
     $html = '<!DOCTYPE html>
 <html>
-<head><meta charset="UTF-8"><title>Vaccination Certificate</title>
-<style>
-    body { font-family:"Times New Roman",serif; margin:30px; background:#fff; }
-    .certificate {
-        border:5px double #2c3e50; padding:30px; max-width:800px; margin:0 auto;
-        position:relative;
-    }
-    .header { text-align:center; border-bottom:2px solid #2c3e50; margin-bottom:20px; }
-    .header .title { font-size:26px; font-weight:bold; color:#1a5276; }
-    .header .subtitle { font-size:15px; color:#555; }
-    .stamp {
-        position:absolute; top:20px; right:20px; font-size:12px; color:#b33939;
-        border:2px solid #b33939; border-radius:50%; width:80px; height:80px;
-        text-align:center; line-height:80px; transform:rotate(-15deg); font-weight:bold;
-    }
-    .info-table { width:100%; margin:20px 0; border-collapse:collapse; }
-    .info-table td { padding:6px; border-bottom:1px dotted #ccc; font-size:14px; }
-    .info-table td:first-child { font-weight:bold; width:30%; }
-    .vax-table { width:100%; border-collapse:collapse; margin-top:20px; }
-    .vax-table th, .vax-table td { border:1px solid #333; padding:7px; text-align:left; font-size:13px; }
-    .vax-table th { background:#2c3e50; color:#fff; }
-    .footer { text-align:center; margin-top:30px; font-size:12px; }
-    .signature { margin-top:40px; display:flex; justify-content:space-between; }
-    .signature .line { width:200px; border-top:1px solid #000; padding-top:5px; font-size:12px; text-align:center; }
-</style></head><body>
+<head>
+    <meta charset="UTF-8">
+    <title>Vaccination Certificate</title>
+    <style>
+        body {
+            font-family: "Times New Roman", serif;
+            margin: 30px;
+            background: #fff;
+        }
+        .certificate {
+            border: 5px double #2c3e50;
+            padding: 30px;
+            max-width: 800px;
+            margin: 0 auto;
+            position: relative;
+        }
+        .header {
+            text-align: center;
+            border-bottom: 2px solid #2c3e50;
+            margin-bottom: 20px;
+        }
+        .header .title {
+            font-size: 26px;
+            font-weight: bold;
+            color: #1a5276;
+        }
+        .header .subtitle {
+            font-size: 15px;
+            color: #555;
+        }
+        .stamp {
+            position: absolute;
+            top: 20px;
+            right: 20px;
+            font-size: 12px;
+            color: #b33939;
+            border: 2px solid #b33939;
+            border-radius: 50%;
+            width: 80px;
+            height: 80px;
+            text-align: center;
+            line-height: 80px;
+            transform: rotate(-15deg);
+            font-weight: bold;
+        }
+        .info-table {
+            width: 100%;
+            margin: 20px 0;
+            border-collapse: collapse;
+        }
+        .info-table td {
+            padding: 6px;
+            border-bottom: 1px dotted #ccc;
+            font-size: 14px;
+        }
+        .info-table td:first-child {
+            font-weight: bold;
+            width: 30%;
+        }
+        .vax-table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 20px;
+        }
+        .vax-table th, .vax-table td {
+            border: 1px solid #333;
+            padding: 7px;
+            text-align: left;
+            font-size: 13px;
+        }
+        .vax-table th {
+            background: #2c3e50;
+            color: #fff;
+        }
+        .footer {
+            text-align: center;
+            margin-top: 30px;
+            font-size: 12px;
+        }
+        /* Signature area – uses flexbox for proper alignment */
+        .signature-area {
+            margin-top: 40px;
+            display: flex;
+            flex-direction: row;
+            justify-content: space-around;
+            align-items: center;
+            flex-wrap: wrap;
+            gap: 20px;
+            border-top: 2px solid #2c3e50;
+            padding-top: 20px;
+        }
+        .signature-area .line {
+            width: 200px;
+            text-align: center;
+            font-size: 12px;
+        }
+        .signature-area .line img {
+            max-height: 80px;
+            margin-bottom: 5px;
+            opacity: 0.9;
+        }
+        .signature-area .qr-code {
+            text-align: center;
+        }
+        .signature-area .qr-code img {
+            width: 100px;
+            margin-bottom: 5px;
+        }
+    </style>
+</head>
+<body>
 <div class="certificate">
     <div class="header">
         <div class="title">የክትባት ሰርተፍኬት<br>VACCINATION CERTIFICATE</div>
@@ -912,11 +999,73 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && preg_match('#^/api/certificates/adm
         <p>Issued under the authority of the Ethiopian Ministry of Health</p>
         <p>Certificate ID: '.$certId.' | Date: '.date('F d, Y').'</p>
     </div>
-    <div class="signature">
-        <div class="line">Health Center Stamp / ማህተም</div>
-        <div class="line">Authorized Signature / ፊርማ</div>
+    <div class="signature-area">
+        <!-- Placeholder – will be replaced by branding images & QR code -->
     </div>
-</div></body></html>';
+</div>
+</body>
+</html>';
+
+    // **********************************************
+    // DIGITAL BRANDING & QR CODE OVERLAY
+    // **********************************************
+
+    // Generate unique verification hash
+    $verificationHash = bin2hex(random_bytes(16));
+    $pdo->prepare("UPDATE certificates SET verification_hash = ? WHERE id = ?")
+        ->execute([$verificationHash, $certId]);
+
+    // Get branding images from settings
+    $settingsStmt = $pdo->query("SELECT `key`, `value` FROM settings WHERE `key` IN ('stamp_image', 'signature_image')");
+    $settings = [];
+    while ($row = $settingsStmt->fetch()) {
+        $settings[$row['key']] = $row['value'];
+    }
+
+    // Embed stamp and signature (base64)
+    $stampBase64 = '';
+    $signatureBase64 = '';
+    if (!empty($settings['stamp_image']) && file_exists($settings['stamp_image'])) {
+        $stampData = file_get_contents($settings['stamp_image']);
+        $stampBase64 = 'data:image/png;base64,' . base64_encode($stampData);
+    }
+    if (!empty($settings['signature_image']) && file_exists($settings['signature_image'])) {
+        $sigData = file_get_contents($settings['signature_image']);
+        $signatureBase64 = 'data:image/png;base64,' . base64_encode($sigData);
+    }
+
+    // QR code image URL
+    $verifyUrl = "http://localhost:3000/verify/" . $verificationHash;
+    $qrUrl = "https://api.qrserver.com/v1/create-qr-code/?size=150x150&data=" . urlencode($verifyUrl);
+
+    // Replace the placeholder with the actual branded section
+    $brandedSection = '
+    <div class="signature-area">
+        <div class="line">';
+    if ($stampBase64) {
+        $brandedSection .= '<img src="'.$stampBase64.'" /><br/>';
+    }
+    $brandedSection .= 'Health Center Stamp / ማህተም
+        </div>
+        <div class="line">';
+    if ($signatureBase64) {
+        $brandedSection .= '<img src="'.$signatureBase64.'" /><br/>';
+    }
+    $brandedSection .= 'Authorized Signature / ፊርማ
+        </div>
+        <div class="qr-code">
+            <img src="'.$qrUrl.'" /><br/>
+            <small>Scan to verify</small>
+        </div>
+    </div>';
+
+    $html = str_replace(
+        '<div class="signature-area">
+        <!-- Placeholder – will be replaced by branding images & QR code -->
+    </div>',
+        $brandedSection,
+        $html
+    );
 
     // 5. Save the file
     $dir = __DIR__ . '/../../storage/certificates/';
@@ -928,10 +1077,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && preg_match('#^/api/certificates/adm
     $stmt = $pdo->prepare("UPDATE certificates SET file_path = ? WHERE id = ?");
     $stmt->execute([$dir . $filename, $certId]);
 
+    audit_log($pdo, 1, 'CERT_ADMIN_APPROVE', "Certificate ID: $certId approved with QR");
+
     echo json_encode(["success" => true, "message" => "Certificate approved and generated"]);
     exit;
 }
-
 // ==================== PARENT DOWNLOAD CERTIFICATE ====================
 if ($_SERVER['REQUEST_METHOD'] === 'GET' && preg_match('#^/api/parent/child/(\d+)/certificate$#', $path, $m)) {
     $childId = $m[1];
@@ -1128,7 +1278,26 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && $path === '/api/nurse/record-vaccin
     // Mark as completed
     $pdo->prepare("UPDATE appointments SET status = 'completed', given_date = CURDATE(), batch_number = ?, nurse_id = ?, notes = ? WHERE id = ?")
         ->execute([$batchNumber, $nurseId, $notes, $appointmentId]);
+     // --- Reset certificate if exists ---
+$certCheck = $pdo->prepare("SELECT id FROM certificates WHERE child_id = ? AND (is_approved_by_nurse = 1 OR is_approved_by_admin = 1)");
+$certCheck->execute([$appt['child_id']]);
+$existingCert = $certCheck->fetch();
+if ($existingCert) {
+    // Revoke both approvals → status becomes outdated
+    $pdo->prepare("UPDATE certificates SET is_approved_by_nurse = 0, is_approved_by_admin = 0 WHERE id = ?")
+        ->execute([$existingCert['id']]);
 
+    // Insert a notification for the assigned nurse
+    $nurseStmt = $pdo->prepare("SELECT nurse_id FROM nurse_assignments WHERE child_id = ?");
+    $nurseStmt->execute([$appt['child_id']]);
+    $assignedNurse = $nurseStmt->fetch();
+    if ($assignedNurse) {
+        $pdo->prepare("INSERT INTO notifications (user_id, child_id, title, message, type)
+                       VALUES (?, ?, 'Certificate Update Required', 'A new vaccine was recorded. Please re‑approve the certificate.', 'cert_update')")
+            ->execute([$assignedNurse['nurse_id'], $appt['child_id']]);
+    }
+    audit_log($pdo, $nurseId, 'CERT_RESET', "Certificate for child {$appt['child_id']} reset due to new vaccination");
+}
     // Decrease inventory quantity if batch provided
     if ($batchNumber) {
         $pdo->prepare("UPDATE inventory SET quantity = quantity - 1 WHERE vaccine_id = ? AND batch_number = ? AND quantity > 0")
@@ -1284,9 +1453,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET' && preg_match('#^/api/appointments/chil
 }
 
 // ==================== GET CERTIFICATE STATUS ====================
+// ==================== GET CERTIFICATE STATUS BY CHILD ID ====================
 if ($_SERVER['REQUEST_METHOD'] === 'GET' && preg_match('#^/api/certificates/child/(\d+)$#', $path, $m)) {
     $childId = $m[1];
-    $stmt = $pdo->prepare("SELECT * FROM certificates WHERE child_id = ?");
+
+    $stmt = $pdo->prepare("
+        SELECT c.*, ch.name AS child_name, ch.unique_child_id
+        FROM certificates c
+        JOIN children ch ON c.child_id = ch.id
+        WHERE c.child_id = ?
+    ");
     $stmt->execute([$childId]);
     $cert = $stmt->fetch();
 
@@ -1296,14 +1472,63 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET' && preg_match('#^/api/certificates/chil
         exit;
     }
 
-    // Add computed field for the frontend
-    $cert['is_fully_approved'] = ($cert['is_approved_by_nurse'] && $cert['is_approved_by_admin']);
+    // Determine dynamic status text
+    if ($cert['is_approved_by_nurse'] && $cert['is_approved_by_admin']) {
+        $cert['status_text'] = 'Ready for Download';
+        $cert['is_fully_approved'] = true;
+    } elseif ($cert['is_approved_by_nurse'] && !$cert['is_approved_by_admin']) {
+        $cert['status_text'] = 'Waiting for Admin Sign-off…';
+        $cert['is_fully_approved'] = false;
+    } elseif (!$cert['is_approved_by_nurse'] && !$cert['is_approved_by_admin']) {
+        $cert['status_text'] = 'New Vaccine Added – Certificate Updating…';
+        $cert['is_fully_approved'] = false;
+    } else {
+        $cert['status_text'] = 'Pending Nurse Approval…';
+        $cert['is_fully_approved'] = false;
+    }
+
     echo json_encode(["success" => true, "data" => $cert]);
     exit;
 }
 
+// Admin upload stamp or signature
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && $path === '/api/admin/upload-branding') {
+    $type = $_POST['type'] ?? '';  // 'stamp' or 'signature'
+    if (!in_array($type, ['stamp', 'signature'])) {
+        http_response_code(400);
+        echo json_encode(["success" => false, "message" => "Invalid type"]);
+        exit;
+    }
 
+    if (!isset($_FILES['file'])) {
+        http_response_code(400);
+        echo json_encode(["success" => false, "message" => "File missing"]);
+        exit;
+    }
 
+    $dir = __DIR__ . '/../../storage/branding/';
+    if (!is_dir($dir)) mkdir($dir, 0777, true);
+
+    $ext = pathinfo($_FILES['file']['name'], PATHINFO_EXTENSION);
+    $filename = $type . '.' . $ext;
+    move_uploaded_file($_FILES['file']['tmp_name'], $dir . $filename);
+
+    // Save path to settings
+    $stmt = $pdo->prepare("REPLACE INTO settings (`key`, `value`) VALUES (?, ?)");
+    $stmt->execute([$type . '_image', $dir . $filename]);
+
+    echo json_encode(["success" => true, "message" => ucfirst($type) . " uploaded"]);
+    exit;
+}
+if ($_SERVER['REQUEST_METHOD'] === 'GET' && $path === '/api/admin/get-branding') {
+    $stmt = $pdo->query("SELECT `key`, `value` FROM settings WHERE `key` IN ('stamp_image', 'signature_image')");
+    $settings = [];
+    while ($row = $stmt->fetch()) {
+        $settings[$row['key']] = $row['value'];
+    }
+    echo json_encode(["success" => true, "data" => $settings]);
+    exit;
+}
 
 
 
