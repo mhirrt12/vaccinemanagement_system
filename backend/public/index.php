@@ -28,6 +28,11 @@ try {
     exit;
 }
 
+
+function audit_log($pdo, $userId, $action, $details = '') {
+    $stmt = $pdo->prepare("INSERT INTO audit_logs (user_id, action, details, ip_address) VALUES (?, ?, ?, ?)");
+    $stmt->execute([$userId, $action, $details, $_SERVER['REMOTE_ADDR'] ?? 'unknown']);
+}
 // ==================== AUTHENTICATION ====================
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && $path === '/api/auth/login') {
     $input = json_decode(file_get_contents('php://input'), true);
@@ -124,6 +129,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET' && $path === '/api/vaccines') {
     exit;
 }
 
+
 // ==================== PARENT CHILDREN LIST ====================
 if ($_SERVER['REQUEST_METHOD'] === 'GET' && $path === '/api/parent/children') {
     $parentId = isset($_GET['parent_id']) ? (int)$_GET['parent_id'] : 0;
@@ -187,7 +193,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET' && $path === '/api/nurse/pending-childr
 // ==================== NURSE APPROVE CHILD ====================
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && preg_match('#^/api/nurse/approve-child/(\d+)$#', $path, $m)) {
     $childId = $m[1];
-    $nurseId = 1; // TODO: extract from real nurse token
+    $input = json_decode(file_get_contents('php://input'), true);
+    $nurseId = isset($input['nurse_id']) ? (int)$input['nurse_id'] : 0;
+
+    if (!$nurseId) {
+        http_response_code(400);
+        echo json_encode(["success" => false, "message" => "Nurse ID required"]);
+        exit;
+    }
 
     $stmt = $pdo->prepare("SELECT * FROM children WHERE id = ? AND status = 'pending'");
     $stmt->execute([$childId]);
@@ -198,6 +211,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && preg_match('#^/api/nurse/approve-ch
         exit;
     }
 
+    // Approve child with this nurse
     $pdo->prepare("UPDATE children SET status = 'approved', approved_by_nurse_id = ?, approved_at = NOW() WHERE id = ?")
        ->execute([$nurseId, $childId]);
 
@@ -225,23 +239,17 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && preg_match('#^/api/nurse/approve-ch
         }
     }
 
-    // Auto-assign nurse
-    $nurseStmt = $pdo->query("
-        SELECT u.id, COUNT(na.child_id) AS assigned_count
-        FROM users u
-        LEFT JOIN nurse_assignments na ON u.id = na.nurse_id
-        WHERE u.role_id = 2 AND u.is_verified = 1
-        GROUP BY u.id
-        ORDER BY assigned_count ASC
-        LIMIT 1
-    ");
-    $assignedNurse = $nurseStmt->fetch();
-    if ($assignedNurse) {
+    // Assign the child directly to THIS nurse (the one who approved)
+    // Insert assignment if not already exists
+    $checkAssign = $pdo->prepare("SELECT id FROM nurse_assignments WHERE child_id = ? AND nurse_id = ?");
+    $checkAssign->execute([$childId, $nurseId]);
+    if (!$checkAssign->fetch()) {
         $pdo->prepare("INSERT INTO nurse_assignments (nurse_id, child_id, assigned_at) VALUES (?, ?, NOW())")
-            ->execute([$assignedNurse['id'], $childId]);
+            ->execute([$nurseId, $childId]);
     }
 
-    echo json_encode(["success" => true, "message" => "Child approved, schedule generated, nurse assigned"]);
+    audit_log($pdo, $nurseId, 'APPROVE_CHILD', "Child ID: $childId, Nurse ID: $nurseId");
+    echo json_encode(["success" => true, "message" => "Child approved and assigned to you"]);
     exit;
 }
 
@@ -463,7 +471,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET' && $path === '/api/admin/nurse-reports'
     $stmt = $pdo->query("
         SELECT r.*, u.name AS nurse_name
         FROM reports r
-        JOIN users u ON r.nurse_id = u.id
+        JOIN users u ON r.generated_by = u.id
         ORDER BY r.created_at DESC
     ");
     echo json_encode(["success" => true, "data" => $stmt->fetchAll(PDO::FETCH_ASSOC)]);
@@ -493,12 +501,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET' && $path === '/api/admin/audit-logs') {
 
 // Get all inventory batches with vaccine name
 if ($_SERVER['REQUEST_METHOD'] === 'GET' && $path === '/api/admin/inventory') {
-    $stmt = $pdo->query("
-        SELECT i.*, v.name AS vaccine_name
-        FROM inventory i
-        JOIN vaccines v ON i.vaccine_id = v.id
-        ORDER BY i.expiry_date ASC
-    ");
+    $vaccineId = isset($_GET['vaccine_id']) ? (int)$_GET['vaccine_id'] : 0;
+    if ($vaccineId > 0) {
+        $stmt = $pdo->prepare("SELECT * FROM inventory WHERE vaccine_id = ? AND quantity > 0 ORDER BY expiry_date ASC");
+        $stmt->execute([$vaccineId]);
+    } else {
+        $stmt = $pdo->query("SELECT i.*, v.name AS vaccine_name FROM inventory i JOIN vaccines v ON i.vaccine_id = v.id ORDER BY i.expiry_date ASC");
+    }
     echo json_encode(["success" => true, "data" => $stmt->fetchAll(PDO::FETCH_ASSOC)]);
     exit;
 }
@@ -559,115 +568,219 @@ if ($_SERVER['REQUEST_METHOD'] === 'DELETE' && preg_match('#^/api/admin/inventor
 }
 
 // ==================== NURSE DUMMY ENDPOINTS ====================
-if ($_SERVER['REQUEST_METHOD'] === 'GET' && $path === '/api/nurse/my-children')       { echo json_encode([]); exit; }
-if ($_SERVER['REQUEST_METHOD'] === 'GET' && $path === '/api/nurse/pending-parents')   { echo json_encode([]); exit; }
-if ($_SERVER['REQUEST_METHOD'] === 'GET' && $path === '/api/nurse/upcoming-appointments') { echo json_encode([]); exit; }
-if ($_SERVER['REQUEST_METHOD'] === 'POST' && $path === '/api/nurse/walkin')           { echo json_encode(["success"=>true,"child_id"=>123]); exit; }
-if ($_SERVER['REQUEST_METHOD'] === 'POST' && $path === '/api/nurse/record-vaccine')   { echo json_encode(["success"=>true]); exit; }
+if ($_SERVER['REQUEST_METHOD'] === 'PUT' && preg_match('#^/api/appointments/(\d+)/status$#', $path, $m)) {
+    $apptId = $m[1];
+    $input = json_decode(file_get_contents('php://input'), true);
+    $status = $input['status'] ?? 'completed'; // completed, missed, etc.
+    $batchNumber = $input['batch_number'] ?? '';
+    $notes = $input['notes'] ?? '';
+    $nurseId = 1; // TODO: from token
 
+    $stmt = $pdo->prepare("UPDATE appointments SET status = ?, given_date = CURDATE(), batch_number = ?, nurse_id = ?, notes = ? WHERE id = ?");
+    $stmt->execute([$status, $batchNumber, $nurseId, $notes, $apptId]);
 
+    // Decrease stock if batch provided
+    if ($batchNumber) {
+        $pdo->prepare("UPDATE inventory SET quantity = quantity - 1 WHERE batch_number = ? AND quantity > 0")->execute([$batchNumber]);
+    }
+
+    audit_log($pdo, $nurseId, 'RECORD_VACCINE', "Appointment ID: $apptId");
+    echo json_encode(["success" => true, "message" => "Status updated"]);
+    exit;
+}
+
+if ($_SERVER['REQUEST_METHOD'] === 'GET' && $path === '/api/nurse/reports') {
+    $nurseId = isset($_GET['nurse_id']) ? (int)$_GET['nurse_id'] : 0;
+    $stmt = $pdo->prepare("SELECT * FROM reports WHERE generated_by = ? ORDER BY created_at DESC");
+    $stmt->execute([$nurseId]);
+    echo json_encode(["success" => true, "data" => $stmt->fetchAll(PDO::FETCH_ASSOC)]);
+    exit;
+}
+
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && $path === '/api/nurse/generate-report') {
+    $input = json_decode(file_get_contents('php://input'), true);
+    $type        = $input['type'] ?? 'weekly';
+    $periodStart = $input['period_start'] ?? date('Y-m-d', strtotime('-7 days'));
+    $periodEnd   = $input['period_end'] ?? date('Y-m-d');
+    $nurseId     = isset($input['nurse_id']) ? (int)$input['nurse_id'] : 0;
+    $challenges  = $input['challenges'] ?? '';   // nurse's written notes
+
+    if (!$nurseId) {
+        http_response_code(400);
+        echo json_encode(["success" => false, "message" => "Nurse ID is required"]);
+        exit;
+    }
+
+    // ---------- VACCINATION SUMMARY ----------
+    // Total children vaccinated (distinct child_id)
+    $totalChildrenStmt = $pdo->prepare("
+        SELECT COUNT(DISTINCT child_id) FROM appointments
+        WHERE nurse_id = ? AND status = 'completed' AND given_date BETWEEN ? AND ?
+    ");
+    $totalChildrenStmt->execute([$nurseId, $periodStart, $periodEnd]);
+    $totalChildren = $totalChildrenStmt->fetchColumn();
+
+    // Doses per vaccine type
+    $dosesPerVaccine = $pdo->prepare("
+        SELECT v.name, COUNT(*) AS count
+        FROM appointments a
+        JOIN vaccines v ON a.vaccine_id = v.id
+        WHERE a.nurse_id = ? AND a.status = 'completed' AND a.given_date BETWEEN ? AND ?
+        GROUP BY v.id, v.name
+    ");
+    $dosesPerVaccine->execute([$nurseId, $periodStart, $periodEnd]);
+    $vaccineBreakdown = $dosesPerVaccine->fetchAll(PDO::FETCH_ASSOC);
+
+    // New registrations vs follow-ups (all appointments completed in period)
+    // We'll treat all as follow-ups after first vaccine; first vaccine = BCG/OPV0
+    $newReg = $pdo->prepare("
+        SELECT COUNT(DISTINCT a.child_id)
+        FROM appointments a
+        JOIN children c ON a.child_id = c.id
+        WHERE a.nurse_id = ? AND a.status = 'completed' AND a.given_date BETWEEN ? AND ?
+          AND c.id NOT IN (
+            SELECT child_id FROM appointments WHERE nurse_id = ? AND status = 'completed' AND given_date < ?
+          )
+    ");
+    $newReg->execute([$nurseId, $periodStart, $periodEnd, $nurseId, $periodStart]);
+    $newRegistrations = $newReg->fetchColumn();
+    $followUps = $totalChildren - $newRegistrations;
+
+    // ---------- APPOINTMENT TRACKING ----------
+    // Completed appointments
+    $completedStmt = $pdo->prepare("
+        SELECT COUNT(*) FROM appointments
+        WHERE nurse_id = ? AND status = 'completed' AND given_date BETWEEN ? AND ?
+    ");
+    $completedStmt->execute([$nurseId, $periodStart, $periodEnd]);
+    $completedAppointments = $completedStmt->fetchColumn();
+
+    // Missed appointments with child & parent details
+    $defaulterStmt = $pdo->prepare("
+        SELECT a.scheduled_date, c.name AS child_name, u.phone AS parent_phone
+        FROM appointments a
+        JOIN children c ON a.child_id = c.id
+        JOIN users u ON c.parent_id = u.id
+        JOIN nurse_assignments na ON c.id = na.child_id AND na.nurse_id = ?
+        WHERE a.status = 'missed' AND a.scheduled_date BETWEEN ? AND ?
+    ");
+    $defaulterStmt->execute([$nurseId, $periodStart, $periodEnd]);
+    $defaulters = $defaulterStmt->fetchAll(PDO::FETCH_ASSOC);
+
+    // Pending and approved reschedule requests
+    $pendingReschedule = $pdo->prepare("
+        SELECT COUNT(*) FROM appointments
+        WHERE nurse_id = ? AND status = 'rescheduled' AND reschedule_approved = 0
+          AND reschedule_request_date BETWEEN ? AND ?
+    ");
+    $pendingReschedule->execute([$nurseId, $periodStart, $periodEnd]);
+    $pendingRescheduleCount = $pendingReschedule->fetchColumn();
+
+    $approvedReschedule = $pdo->prepare("
+        SELECT COUNT(*) FROM appointments
+        WHERE nurse_id = ? AND status = 'rescheduled' AND reschedule_approved = 1
+          AND reschedule_request_date BETWEEN ? AND ?
+    ");
+    $approvedReschedule->execute([$nurseId, $periodStart, $periodEnd]);
+    $approvedRescheduleCount = $approvedReschedule->fetchColumn();
+
+    // ---------- INVENTORY & WASTAGE ----------
+    // Doses used (assuming each completed appointment with a batch_number reduces inventory)
+    // We'll count total completed appointments with a batch number
+    $dosesUsedStmt = $pdo->prepare("
+        SELECT COUNT(*) FROM appointments
+        WHERE nurse_id = ? AND status = 'completed' AND batch_number IS NOT NULL AND batch_number != ''
+          AND given_date BETWEEN ? AND ?
+    ");
+    $dosesUsedStmt->execute([$nurseId, $periodStart, $periodEnd]);
+    $dosesUsed = $dosesUsedStmt->fetchColumn();
+
+    // Wastage: expired batches (no direct tracking, keep placeholder)
+    $wastage = []; // Could be improved with a dedicated wastage log
+
+    // Current closing stock per vaccine
+    $stockStmt = $pdo->query("
+        SELECT v.name, COALESCE(SUM(i.quantity), 0) AS total_qty
+        FROM vaccines v
+        LEFT JOIN inventory i ON v.id = i.vaccine_id
+        WHERE v.is_active = 1
+        GROUP BY v.id, v.name
+        ORDER BY v.name
+    ");
+    $stockBreakdown = $stockStmt->fetchAll(PDO::FETCH_ASSOC);
+
+    // ---------- HEALTH & SAFETY ----------
+    // AEFI placeholder: could be recorded in children notes or a separate table
+    $aefiStmt = $pdo->prepare("
+        SELECT c.name, c.notes
+        FROM children c
+        JOIN nurse_assignments na ON c.id = na.child_id AND na.nurse_id = ?
+        WHERE c.notes IS NOT NULL AND c.notes != ''
+    ");
+    $aefiStmt->execute([$nurseId]);
+    $aefiCases = $aefiStmt->fetchAll(PDO::FETCH_ASSOC);
+
+    // ---------- BUILD REPORT DATA ----------
+    $reportData = [
+        'type' => $type,
+        'period_start' => $periodStart,
+        'period_end' => $periodEnd,
+        'vaccination_summary' => [
+            'total_children_vaccinated' => $totalChildren,
+            'new_registrations' => $newRegistrations,
+            'follow_ups' => $followUps,
+            'doses_per_vaccine' => $vaccineBreakdown,
+        ],
+        'appointment_tracking' => [
+            'completed_appointments' => $completedAppointments,
+            'defaulters' => $defaulters,
+            'pending_reschedule_requests' => $pendingRescheduleCount,
+            'approved_reschedule_requests' => $approvedRescheduleCount,
+        ],
+        'inventory_wastage' => [
+            'doses_used' => $dosesUsed,
+            'wastage' => $wastage,
+            'closing_stock' => $stockBreakdown,
+        ],
+        'health_safety' => [
+            'aefi_cases' => $aefiCases,
+            'challenges' => $challenges,
+        ],
+    ];
+
+    $jsonData = json_encode($reportData, JSON_UNESCAPED_UNICODE);
+
+    // Insert into reports
+    $stmt = $pdo->prepare("
+        INSERT INTO reports (type, generated_by, data, period_start, period_end)
+        VALUES (?, ?, ?, ?, ?)
+    ");
+    $stmt->execute([$type, $nurseId, $jsonData, $periodStart, $periodEnd]);
+
+    audit_log($pdo, $nurseId, 'GENERATE_REPORT', "Report type: $type, period: $periodStart to $periodEnd");
+
+    echo json_encode(["success" => true, "message" => "Detailed report generated and sent to admin"]);
+    exit;
+}
 // ==================== CERTIFICATE GENERATION ====================
 // ==================== CERTIFICATE GENERATION (after both approvals) ====================
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && $path === '/api/certificates/generate') {
     $input = json_decode(file_get_contents('php://input'), true);
     $childId = $input['child_id'] ?? 0;
-    
-    // Check both approvals exist for this child
-    $stmt = $pdo->prepare("
-        SELECT * FROM certificates WHERE child_id = ? AND is_approved_by_nurse = 1 AND is_approved_by_admin = 1
-    ");
+
+    // Check if a certificate already exists
+    $stmt = $pdo->prepare("SELECT id FROM certificates WHERE child_id = ?");
     $stmt->execute([$childId]);
-    $cert = $stmt->fetch();
-    if (!$cert) {
-        http_response_code(400);
-        echo json_encode(["success" => false, "message" => "Certificate not fully approved yet."]);
+    if ($stmt->fetch()) {
+        http_response_code(409);
+        echo json_encode(["success" => false, "message" => "Certificate already requested"]);
         exit;
     }
-    
-    // Fetch child data
-    $childStmt = $pdo->prepare("SELECT * FROM children WHERE id = ?");
-    $childStmt->execute([$childId]);
-    $child = $childStmt->fetch();
-    if (!$child) {
-        http_response_code(404);
-        echo json_encode(["success" => false, "message" => "Child not found"]);
-        exit;
-    }
-    
-    // Fetch parent data
-    $parentStmt = $pdo->prepare("SELECT name FROM users WHERE id = ?");
-    $parentStmt->execute([$child['parent_id']]);
-    $parent = $parentStmt->fetch();
-    $parentName = $parent ? $parent['name'] : 'Unknown';
-    
-    // Fetch completed appointments
-    $apptStmt = $pdo->prepare("
-        SELECT a.*, v.name as vaccine_name 
-        FROM appointments a 
-        JOIN vaccines v ON a.vaccine_id = v.id 
-        WHERE a.child_id = ? AND a.status = 'completed'
-    ");
-    $apptStmt->execute([$childId]);
-    $appts = $apptStmt->fetchAll();
-    
-    $kebele = "04";
-    $woreda = "Sample Woreda";
-    $zone = "Sample Zone";
-    $region = "Sample Region";
-    
-    $html = '<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Vaccination Certificate</title>
-    <style>
-        body{font-family:"Times New Roman", serif; margin:30px; background:#fff;}
-        .certificate{border:5px double #2c3e50; padding:30px; max-width:800px; margin:0 auto; position:relative;}
-        .header{text-align:center; border-bottom:2px solid #2c3e50; margin-bottom:20px;}
-        .header .title{font-size:24px; font-weight:bold; color:#1a5276;}
-        .header .subtitle{font-size:14px; color:#555;}
-        .stamp{position:absolute; top:10px; right:20px; font-size:12px; border:2px solid #b33939; border-radius:50%; width:80px; height:80px; text-align:center; line-height:80px; color:#b33939; transform:rotate(-15deg); font-weight:bold;}
-        .info-table{width:100%; margin:20px 0; border-collapse:collapse;}
-        .info-table td{padding:5px; border-bottom:1px dotted #ccc; font-size:14px;}
-        .info-table td:first-child{font-weight:bold; width:30%;}
-        .vax-table{width:100%; border-collapse:collapse; margin-top:20px;}
-        .vax-table th,.vax-table td{border:1px solid #333; padding:6px; text-align:left; font-size:13px;}
-        .vax-table th{background:#2c3e50; color:#fff;}
-        .footer{text-align:center; margin-top:30px; font-size:12px;}
-        .signature{margin-top:40px; display:flex; justify-content:space-between;}
-        .signature .line{width:200px; border-top:1px solid #000; padding-top:5px; font-size:12px; text-align:center;}
-    </style></head><body><div class="certificate">';
-    
-    $html .= '<div class="header"><div class="title">የክትባት ሰርተፍኬት<br>VACCINATION CERTIFICATE</div><div class="subtitle">Federal Democratic Republic of Ethiopia<br>Ministry of Health</div></div>';
-    $html .= '<div class="stamp">APPROVED</div>';
-    $html .= '<table class="info-table"><tr><td>Child Name / የልጅ ስም:</td><td>'.htmlspecialchars($child['name']).'</td></tr>';
-    $html .= '<tr><td>Unique ID / መለያ ቁጥር:</td><td>'.htmlspecialchars($child['unique_child_id']).'</td></tr>';
-    $html .= '<tr><td>Date of Birth / የትውልድ ቀን:</td><td>'.$child['dob'].'</td></tr>';
-    $html .= '<tr><td>Gender / ጾታ:</td><td>'.$child['gender'].'</td></tr>';
-    $html .= '<tr><td>Parent/Guardian / ወላጅ:</td><td>'.htmlspecialchars($parentName).'</td></tr>';
-    $html .= '<tr><td>Kebele / ቀበሌ:</td><td>'.$kebele.'</td></tr>';
-    $html .= '<tr><td>Woreda / ወረዳ:</td><td>'.$woreda.'</td></tr>';
-    $html .= '<tr><td>Zone / ዞን:</td><td>'.$zone.'</td></tr>';
-    $html .= '<tr><td>Region / ክልል:</td><td>'.$region.'</td></tr></table>';
-    $html .= '<h4>Vaccines Administered / የተከተቡ ክትባቶች</h4><table class="vax-table"><thead><tr><th>Vaccine</th><th>Date Given</th><th>Batch No.</th></tr></thead><tbody>';
-    
-    foreach ($appts as $v) {
-        $batch = $v['batch_number'] ?? 'N/A';
-        $html .= '<tr><td>'.htmlspecialchars($v['vaccine_name']).'</td>
-               <td>'.$v['given_date'].'</td>
-               <td>'.$batch.'</td></tr>';
-    }
-    $html .= '</tbody></table>';
-    $html .= '<div class="footer"><p>Issued under the authority of the Ethiopian Ministry of Health</p><p>Certificate ID: '.$cert['id'].' | Date: '.date('F d, Y').'</p></div>';
-    $html .= '<div class="signature"><div class="line">Health Center Stamp</div><div class="line">Authorized Signature</div></div>';
-    $html .= '</div></body></html>';
-    
-    // Save file
-    $dir = __DIR__.'/../../storage/certificates/';
-    if (!is_dir($dir)) {
-        mkdir($dir, 0777, true);
-    }
-    $filename = 'cert_'.$child['unique_child_id'].'_'.time().'.html';
-    file_put_contents($dir.$filename, $html);
-    $pdo->prepare("UPDATE certificates SET file_path = ? WHERE id = ?")->execute([$dir.$filename, $cert['id']]);
-    
-    echo json_encode(["success" => true, "message" => "Certificate generated"]);
+
+    $stmt = $pdo->prepare("INSERT INTO certificates (child_id, is_approved_by_nurse, is_approved_by_admin) VALUES (?, 0, 0)");
+    $stmt->execute([$childId]);
+    audit_log($pdo, $childId, 'CERT_REQUEST', "Certificate requested for child ID $childId");
+    echo json_encode(["success" => true, "message" => "Certificate request submitted"]);
     exit;
 }
 
@@ -682,7 +795,23 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && preg_match('#^/api/certificates/nur
     exit;
 }
 
+if ($_SERVER['REQUEST_METHOD'] === 'GET' && $path === '/api/nurse/pending-certificates') {
+    $nurseId = isset($_GET['nurse_id']) ? (int)$_GET['nurse_id'] : 0;
 
+    $stmt = $pdo->prepare("
+        SELECT c.id AS certificate_id, c.child_id, ch.name AS child_name, ch.unique_child_id, c.created_at
+        FROM certificates c
+        JOIN children ch ON c.child_id = ch.id
+        JOIN nurse_assignments na ON ch.id = na.child_id AND na.nurse_id = ?
+        WHERE c.is_approved_by_nurse = 0
+        ORDER BY c.created_at ASC
+    ");
+    $stmt->execute([$nurseId]);
+    $certs = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
+    echo json_encode(["success" => true, "data" => $certs]);
+    exit;
+}
 // ==================== CERTIFICATE : ADMIN APPROVE + GENERATE FILE ====================
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && preg_match('#^/api/certificates/admin-approve/(\d+)$#', $path, $m)) {
     $certId = $m[1];
@@ -720,11 +849,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && preg_match('#^/api/certificates/adm
     $appts = $stmt->fetchAll();
 
     // 4. Ethiopian‑style certificate HTML
-    $kebele = "04";
-    $woreda = "Yeka";
-    $zone   = "Addis Ababa";
-    $region = "Addis Ababa City Administration";
-
+   $kebele = "04";
+   $woreda = "Menatabiya";
+   $zone   = "Debre Birhan";
+   $region = "Amhara Region";
     $html = '<!DOCTYPE html>
 <html>
 <head><meta charset="UTF-8"><title>Vaccination Certificate</title>
@@ -807,20 +935,30 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && preg_match('#^/api/certificates/adm
 // ==================== PARENT DOWNLOAD CERTIFICATE ====================
 if ($_SERVER['REQUEST_METHOD'] === 'GET' && preg_match('#^/api/parent/child/(\d+)/certificate$#', $path, $m)) {
     $childId = $m[1];
-    $stmt = $pdo->prepare("SELECT * FROM certificates WHERE child_id = ? AND is_approved_by_nurse = 1 AND is_approved_by_admin = 1");
+
+    $stmt = $pdo->prepare("
+        SELECT c.*, ch.unique_child_id
+        FROM certificates c
+        JOIN children ch ON c.child_id = ch.id
+        WHERE c.child_id = ? AND c.is_approved_by_nurse = 1 AND c.is_approved_by_admin = 1
+    ");
     $stmt->execute([$childId]);
     $cert = $stmt->fetch();
+
     if (!$cert) {
         http_response_code(403);
         echo json_encode(["success" => false, "message" => "Certificate is not fully approved yet."]);
         exit;
     }
+
     $file = $cert['file_path'];
     if (!file_exists($file)) {
         http_response_code(404);
         echo json_encode(["success" => false, "message" => "Certificate file missing"]);
         exit;
     }
+
+    audit_log($pdo, $childId, 'DOWNLOAD_CERT', "Child ID: $childId");
     header('Content-Type: text/html');
     header('Content-Disposition: attachment; filename="certificate_'.$cert['unique_child_id'].'.html"');
     readfile($file);
@@ -828,13 +966,341 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET' && preg_match('#^/api/parent/child/(\d+
 }
 
 
+//nursessssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssss
+
+// ==================== NURSE PENDING PARENTS ====================
+if ($_SERVER['REQUEST_METHOD'] === 'GET' && $path === '/api/nurse/pending-parents') {
+    $stmt = $pdo->query("SELECT id, name, email, phone, created_at FROM users WHERE role_id = 1 AND is_verified = 0 ORDER BY created_at ASC");
+    echo json_encode(["success" => true, "data" => $stmt->fetchAll(PDO::FETCH_ASSOC)]);
+    exit;
+}
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && preg_match('#^/api/nurse/approve-parent/(\d+)$#', $path, $m)) {
+    $parentId = $m[1];
+    $pdo->prepare("UPDATE users SET is_verified = 1 WHERE id = ? AND role_id = 1 AND is_verified = 0")->execute([$parentId]);
+    audit_log($pdo, 1, 'APPROVE_PARENT', "Parent ID: $parentId approved");
+    echo json_encode(["success" => true, "message" => "Parent approved"]);
+    exit;
+}
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && preg_match('#^/api/nurse/reject-parent/(\d+)$#', $path, $m)) {
+    $parentId = $m[1];
+    // soft reject - set verified=2 (or delete) – set to -1 for rejected
+    $pdo->prepare("UPDATE users SET is_verified = -1 WHERE id = ? AND role_id = 1 AND is_verified = 0")->execute([$parentId]);
+    audit_log($pdo, 1, 'REJECT_PARENT', "Parent ID: $parentId rejected");
+    echo json_encode(["success" => true, "message" => "Parent rejected"]);
+    exit;
+}
+if ($_SERVER['REQUEST_METHOD'] === 'GET' && $path === '/api/nurse/my-children') {
+    $nurseId = isset($_GET['nurse_id']) ? (int)$_GET['nurse_id'] : 0;
+    $stmt = $pdo->prepare("
+        SELECT c.*, u.name AS parent_name, u.phone AS parent_phone,
+               (SELECT COUNT(*) FROM appointments WHERE child_id = c.id AND status = 'completed') AS vaccines_given,
+               (SELECT COUNT(*) FROM appointments WHERE child_id = c.id) AS total_appointments
+        FROM children c
+        JOIN nurse_assignments na ON c.id = na.child_id AND na.nurse_id = ?
+        JOIN users u ON c.parent_id = u.id
+        WHERE c.status = 'approved'
+        ORDER BY c.name ASC
+    ");
+    $stmt->execute([$nurseId]);
+    $children = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
+    foreach ($children as &$child) {
+        // Vaccination progress
+        $child['vaccine_progress'] = $child['total_appointments'] > 0
+            ? round(($child['vaccines_given'] / $child['total_appointments']) * 100)
+            : 0;
+
+        // Find the earliest upcoming appointment date (including today)
+        $nextDateStmt = $pdo->prepare("
+            SELECT MIN(scheduled_date) FROM appointments
+            WHERE child_id = ? AND status = 'pending' AND scheduled_date >= CURDATE()
+        ");
+        $nextDateStmt->execute([$child['id']]);
+        $child['next_appointment_date'] = $nextDateStmt->fetchColumn();
+
+        // Get all vaccines for that date
+        if ($child['next_appointment_date']) {
+            $vaccinesStmt = $pdo->prepare("
+                SELECT v.name FROM appointments a
+                JOIN vaccines v ON a.vaccine_id = v.id
+                WHERE a.child_id = ? AND a.status = 'pending'
+                  AND a.scheduled_date = ?
+                ORDER BY v.name
+            ");
+            $vaccinesStmt->execute([$child['id'], $child['next_appointment_date']]);
+            $child['next_vaccines'] = $vaccinesStmt->fetchAll(PDO::FETCH_COLUMN);
+        } else {
+            $child['next_vaccines'] = [];
+        }
+    }
+
+    echo json_encode(["success" => true, "data" => $children]);
+    exit;
+}
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && $path === '/api/nurse/walkin') {
+    $input = json_decode(file_get_contents('php://input'), true);
+    $parentId     = $input['parent_id'] ?? 0;
+    $parentName   = $input['parent_name'] ?? '';
+    $parentPhone  = $input['parent_phone'] ?? '';
+    $childName    = $input['child_name'] ?? '';
+    $dob          = $input['dob'] ?? '';
+    $gender       = $input['gender'] ?? 'Male';
+    $bloodType    = $input['blood_type'] ?? '';
+    $allergies    = $input['allergies'] ?? '';
+    $birthWeight  = $input['birth_weight'] ?? null;
+    $deliveryType = $input['delivery_type'] ?? 'Normal';
+    $birthPlace   = $input['birth_place'] ?? '';
+    $notes        = $input['notes'] ?? '';
+    $nurseId      = isset($input['nurse_id']) ? (int)$input['nurse_id'] : 0;
+
+    if (!$childName || !$dob) {
+        http_response_code(400);
+        echo json_encode(["success" => false, "message" => "Child name and DOB required"]);
+        exit;
+    }
+
+    // If parent_id = 0, create new parent record
+    if ($parentId == 0 && $parentName && $parentPhone) {
+        $stmt = $pdo->prepare("SELECT id FROM users WHERE phone = ?");
+        $stmt->execute([$parentPhone]);
+        $existing = $stmt->fetch();
+        if ($existing) {
+            $parentId = $existing['id'];
+        } else {
+            $stmt = $pdo->prepare("INSERT INTO users (name, email, phone, password_hash, role_id, is_verified) VALUES (?, ?, ?, ?, 1, 1)");
+            $stmt->execute([$parentName, $parentPhone.'@walkin.local', $parentPhone, password_hash('walkin123', PASSWORD_DEFAULT)]);
+            $parentId = $pdo->lastInsertId();
+            audit_log($pdo, $nurseId, 'WALKIN_PARENT_CREATED', "Parent: $parentName, Phone: $parentPhone");
+        }
+    }
+
+    if ($parentId == 0) {
+        http_response_code(400);
+        echo json_encode(["success" => false, "message" => "Parent information missing"]);
+        exit;
+    }
+
+    // Insert child as approved immediately
+    $uniqueId = 'CHLD-' . date('Ymd') . '-' . strtoupper(substr(uniqid(), -4));
+    $stmt = $pdo->prepare("INSERT INTO children (parent_id, unique_child_id, name, dob, gender, blood_type, allergies, birth_weight, delivery_type, birth_place, notes, status, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'approved', NOW())");
+    $stmt->execute([$parentId, $uniqueId, $childName, $dob, $gender, $bloodType, $allergies, $birthWeight, $deliveryType, $birthPlace, $notes]);
+    $childId = $pdo->lastInsertId();
+
+    // Generate vaccination schedule
+    $vaccines = $pdo->query("SELECT id, days_from_birth FROM vaccines WHERE is_active = 1")->fetchAll();
+    foreach ($vaccines as $vax) {
+        $due = date('Y-m-d', strtotime($dob . ' + ' . $vax['days_from_birth'] . ' days'));
+        $pdo->prepare("INSERT INTO appointments (child_id, vaccine_id, scheduled_date, status) VALUES (?, ?, ?, 'pending')")
+            ->execute([$childId, $vax['id'], $due]);
+    }
+
+    // Assign the child to THIS nurse (the one who performed the walk‑in)
+    if ($nurseId > 0) {
+        $checkAssign = $pdo->prepare("SELECT id FROM nurse_assignments WHERE child_id = ? AND nurse_id = ?");
+        $checkAssign->execute([$childId, $nurseId]);
+        if (!$checkAssign->fetch()) {
+            $pdo->prepare("INSERT INTO nurse_assignments (nurse_id, child_id, assigned_at) VALUES (?, ?, NOW())")
+                ->execute([$nurseId, $childId]);
+        }
+    }
+
+    audit_log($pdo, $nurseId, 'WALKIN_REGISTER', "Child ID: $childId, Name: $childName");
+    echo json_encode(["success" => true, "child_id" => $childId, "message" => "Child registered and assigned to you"]);
+    exit;
+}
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && $path === '/api/nurse/record-vaccine') {
+    $input = json_decode(file_get_contents('php://input'), true);
+    $appointmentId = $input['appointment_id'] ?? 0;
+    $batchNumber = $input['batch_number'] ?? '';
+    $notes = $input['notes'] ?? '';
+    $nurseId = 1; // TODO: from token
+
+    $stmt = $pdo->prepare("SELECT * FROM appointments WHERE id = ?");
+    $stmt->execute([$appointmentId]);
+    $appt = $stmt->fetch();
+    if (!$appt) {
+        http_response_code(404);
+        echo json_encode(["success" => false, "message" => "Appointment not found"]);
+        exit;
+    }
+
+    // Mark as completed
+    $pdo->prepare("UPDATE appointments SET status = 'completed', given_date = CURDATE(), batch_number = ?, nurse_id = ?, notes = ? WHERE id = ?")
+        ->execute([$batchNumber, $nurseId, $notes, $appointmentId]);
+
+    // Decrease inventory quantity if batch provided
+    if ($batchNumber) {
+        $pdo->prepare("UPDATE inventory SET quantity = quantity - 1 WHERE vaccine_id = ? AND batch_number = ? AND quantity > 0")
+            ->execute([$appt['vaccine_id'], $batchNumber]);
+    }
+
+    audit_log($pdo, $nurseId, 'RECORD_VACCINE', "Appointment ID: $appointmentId, Vaccine: {$appt['vaccine_id']}");
+    echo json_encode(["success" => true, "message" => "Vaccine recorded"]);
+    exit;
+}
+if ($_SERVER['REQUEST_METHOD'] === 'GET' && $path === '/api/nurse/upcoming-appointments') {
+    $nurseId = isset($_GET['nurse_id']) ? (int)$_GET['nurse_id'] : 0;
+    $stmt = $pdo->prepare("
+        SELECT a.*, c.name AS child_name, c.unique_child_id, v.name AS vaccine_name,
+               u.name AS parent_name, u.phone AS parent_phone
+        FROM appointments a
+        JOIN children c ON a.child_id = c.id
+        JOIN vaccines v ON a.vaccine_id = v.id
+        JOIN nurse_assignments na ON c.id = na.child_id AND na.nurse_id = ?
+        JOIN users u ON c.parent_id = u.id
+        WHERE a.status = 'pending'
+          AND a.scheduled_date BETWEEN CURDATE() AND DATE_ADD(CURDATE(), INTERVAL 7 DAY)
+        ORDER BY a.scheduled_date ASC
+    ");
+    $stmt->execute([$nurseId]);
+    echo json_encode(["success" => true, "data" => $stmt->fetchAll(PDO::FETCH_ASSOC)]);
+    exit;
+}
+if ($_SERVER['REQUEST_METHOD'] === 'GET' && $path === '/api/nurse/search') {
+    $query   = $_GET['q'] ?? '';
+    $nurseId = isset($_GET['nurse_id']) ? (int)$_GET['nurse_id'] : 0;
+
+    if (!$query) {
+        echo json_encode(["success" => true, "data" => []]);
+        exit;
+    }
+
+    // 1. Find children assigned to this nurse that match the search
+    $stmt = $pdo->prepare("
+        SELECT c.id, c.name, c.unique_child_id, c.dob, c.gender, c.blood_type,
+               c.allergies, c.status,
+               u.name AS parent_name, u.phone AS parent_phone
+        FROM children c
+        JOIN nurse_assignments na ON c.id = na.child_id AND na.nurse_id = ?
+        JOIN users u ON c.parent_id = u.id
+        WHERE (c.unique_child_id LIKE ? OR c.name LIKE ?)
+        ORDER BY c.name ASC
+    ");
+    $stmt->execute([$nurseId, "%$query%", "%$query%"]);
+    $children = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
+    // 2. Enrich each child with vaccination progress and upcoming appointments
+    foreach ($children as &$child) {
+        // Total appointments and completed count
+        $total = $pdo->prepare("SELECT COUNT(*) FROM appointments WHERE child_id = ?");
+        $total->execute([$child['id']]);
+        $totalCount = $total->fetchColumn();
+        $completed = $pdo->prepare("SELECT COUNT(*) FROM appointments WHERE child_id = ? AND status = 'completed'");
+        $completed->execute([$child['id']]);
+        $completedCount = $completed->fetchColumn();
+        $child['vaccine_progress'] = $totalCount > 0
+            ? round(($completedCount / $totalCount) * 100)
+            : 0;
+
+        // Next appointment: earliest pending date + all vaccines on that date
+        $nextDateStmt = $pdo->prepare("
+            SELECT MIN(a.scheduled_date) AS next_date
+            FROM appointments a
+            WHERE a.child_id = ? AND a.status = 'pending' AND a.scheduled_date >= CURDATE()
+        ");
+        $nextDateStmt->execute([$child['id']]);
+        $nextDateRow = $nextDateStmt->fetch();
+        $child['next_appointment_date'] = $nextDateRow ? $nextDateRow['next_date'] : null;
+
+        if ($child['next_appointment_date']) {
+            $vaccinesStmt = $pdo->prepare("
+                SELECT v.name AS vaccine_name
+                FROM appointments a
+                JOIN vaccines v ON a.vaccine_id = v.id
+                WHERE a.child_id = ? AND a.status = 'pending'
+                  AND a.scheduled_date = ?
+                ORDER BY v.name
+            ");
+            $vaccinesStmt->execute([$child['id'], $child['next_appointment_date']]);
+            $child['next_vaccines'] = $vaccinesStmt->fetchAll(PDO::FETCH_COLUMN);
+        } else {
+            $child['next_vaccines'] = [];
+        }
+    }
+
+    echo json_encode(["success" => true, "data" => $children]);
+    exit;
+}
+if ($_SERVER['REQUEST_METHOD'] === 'GET' && $path === '/api/nurse/filter-by-vaccine') {
+    $vaccineId = $_GET['vaccine_id'] ?? 0;
+    $nurseId   = isset($_GET['nurse_id']) ? (int)$_GET['nurse_id'] : 0;
+
+    $stmt = $pdo->prepare("
+        SELECT a.*, c.name AS child_name, c.unique_child_id, v.name AS vaccine_name
+        FROM appointments a
+        JOIN children c ON a.child_id = c.id
+        JOIN vaccines v ON a.vaccine_id = v.id
+        JOIN nurse_assignments na ON c.id = na.child_id AND na.nurse_id = ?
+        WHERE a.vaccine_id = ? AND a.status = 'pending'
+        ORDER BY a.scheduled_date ASC
+    ");
+    $stmt->execute([$nurseId, $vaccineId]);
+    echo json_encode(["success" => true, "data" => $stmt->fetchAll(PDO::FETCH_ASSOC)]);
+    exit;
+}
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && preg_match('#^/api/nurse/child/(\d+)/notes$#', $path, $m)) {
+    $childId = $m[1];
+    $input = json_decode(file_get_contents('php://input'), true);
+    $notes = $input['notes'] ?? '';
+    $pdo->prepare("UPDATE children SET notes = ? WHERE id = ?")->execute([$notes, $childId]);
+    echo json_encode(["success" => true, "message" => "Notes saved"]);
+    exit;
+}
 
 
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && preg_match('#^/api/nurse/appointment/(\d+)/approve-reschedule$#', $path, $m)) {
+    $apptId = $m[1];
+    $input = json_decode(file_get_contents('php://input'), true);
+    $approved = $input['approved'] ?? false;
+    if ($approved) {
+        $pdo->prepare("UPDATE appointments SET scheduled_date = reschedule_request_date, reschedule_request_date = NULL, status = 'pending' WHERE id = ?")->execute([$apptId]);
+    } else {
+        $pdo->prepare("UPDATE appointments SET reschedule_request_date = NULL, status = 'pending' WHERE id = ?")->execute([$apptId]);
+    }
+    audit_log($pdo, 1, 'APPROVE_RESCHEDULE', "Appointment ID: $apptId, Approved: $approved");
+    echo json_encode(["success" => true]);
+    exit;
+}
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && preg_match('#^/api/nurse/approve-certificate/(\d+)$#', $path, $m)) {
+    $certId = $m[1];
+    $pdo->prepare("UPDATE certificates SET is_approved_by_nurse = 1 WHERE id = ? AND is_approved_by_nurse = 0")->execute([$certId]);
+    audit_log($pdo, 1, 'NURSE_CERT_APPROVE', "Certificate ID: $certId");
+    echo json_encode(["success" => true, "message" => "Certificate approved"]);
+    exit;
+}
+if ($_SERVER['REQUEST_METHOD'] === 'GET' && preg_match('#^/api/appointments/child/(\d+)$#', $path, $m)) {
+    $childId = $m[1];
+    $stmt = $pdo->prepare("
+        SELECT a.*, v.name AS vaccine_name
+        FROM appointments a
+        JOIN vaccines v ON a.vaccine_id = v.id
+        WHERE a.child_id = ?
+        ORDER BY a.scheduled_date ASC
+    ");
+    $stmt->execute([$childId]);
+    echo json_encode(["success" => true, "data" => $stmt->fetchAll(PDO::FETCH_ASSOC)]);
+    exit;
+}
 
+// ==================== GET CERTIFICATE STATUS ====================
+if ($_SERVER['REQUEST_METHOD'] === 'GET' && preg_match('#^/api/certificates/child/(\d+)$#', $path, $m)) {
+    $childId = $m[1];
+    $stmt = $pdo->prepare("SELECT * FROM certificates WHERE child_id = ?");
+    $stmt->execute([$childId]);
+    $cert = $stmt->fetch();
 
+    if (!$cert) {
+        http_response_code(404);
+        echo json_encode(["success" => false, "message" => "No certificate found for this child"]);
+        exit;
+    }
 
-
-
+    // Add computed field for the frontend
+    $cert['is_fully_approved'] = ($cert['is_approved_by_nurse'] && $cert['is_approved_by_admin']);
+    echo json_encode(["success" => true, "data" => $cert]);
+    exit;
+}
 
 
 
