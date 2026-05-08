@@ -255,6 +255,37 @@ INSERT INTO `vaccines` (`name`, `days_from_birth`, `description`, `is_active`) V
 ('MCV1', 274, 'Measles Containing Vaccine (9 months)', 1),
 ('MCV2', 456, 'Measles Containing Vaccine (15 months)', 1);
 
+
+
+ALTER TABLE certificates 
+ADD COLUMN verification_hash VARCHAR(64) UNIQUE NULL AFTER file_path,
+ADD COLUMN stamp_image VARCHAR(255) NULL AFTER verification_hash,
+ADD COLUMN signature_image VARCHAR(255) NULL AFTER stamp_image;
+
+
+CREATE TABLE IF NOT EXISTS settings (
+    `key` VARCHAR(50) PRIMARY KEY,
+    `value` TEXT NULL
+);
+
+INSERT INTO settings (`key`, `value`) VALUES
+('stamp_image', ''),
+('signature_image', '')
+ON DUPLICATE KEY UPDATE `value` = VALUES(`value`);
+
+
+CREATE TABLE IF NOT EXISTS sent_notifications (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    appointment_id INT NOT NULL,
+    notification_type ENUM('reminder_3day','reminder_dayof') NOT NULL,
+    channel ENUM('email','sms') NOT NULL,
+    sent_to VARCHAR(255) NOT NULL,
+    content TEXT NOT NULL,
+    status ENUM('sent','failed') NOT NULL DEFAULT 'sent',
+    error_message TEXT NULL,
+    sent_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (appointment_id) REFERENCES appointments(id)
+);
 -- ==============================
 -- DONE
 -- ==============================

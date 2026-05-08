@@ -21,7 +21,7 @@ class Database {
         $host = getenv('DB_HOST') ?: 'localhost';
         $dbname = getenv('DB_NAME') ?: 'vaccine_ms';
        $user = 'root';
-       $pass = '';;
+       $pass = 'root';;
         $charset = 'utf8mb4';
         
         // DSN (Data Source Name)

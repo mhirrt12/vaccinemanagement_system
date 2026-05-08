@@ -2,6 +2,13 @@
 error_reporting(E_ALL);
 ini_set('display_errors', 1);
 
+// ==================== PHPMailer ====================
+require_once __DIR__ . '/../vendor/phpmailer/phpmailer/src/PHPMailer.php';
+require_once __DIR__ . '/../vendor/phpmailer/phpmailer/src/SMTP.php';
+require_once __DIR__ . '/../vendor/phpmailer/phpmailer/src/Exception.php';
+use PHPMailer\PHPMailer\PHPMailer;
+use PHPMailer\PHPMailer\Exception;
+
 // ==================== CORS ====================
 header("Access-Control-Allow-Origin: http://localhost:3000");
 header("Access-Control-Allow-Credentials: true");
@@ -20,7 +27,7 @@ if (file_exists($static_file) && is_file($static_file) && $path !== '/index.php'
 
 // ==================== Database ====================
 try {
-    $pdo = new PDO("mysql:host=localhost;dbname=vaccine_ms;charset=utf8mb4", "root", "");
+    $pdo = new PDO("mysql:host=localhost;dbname=vaccine_ms;charset=utf8mb4", "root", "root");
     $pdo->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
 } catch (PDOException $e) {
     http_response_code(500);
@@ -1531,8 +1538,227 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET' && $path === '/api/admin/get-branding')
 }
 
 
+// ==================== CRON: SEND APPOINTMENT REMINDERS ====================
+// ==================== CRON: SEND APPOINTMENT REMINDERS (REAL EMAIL) ====================
+if ($_SERVER['REQUEST_METHOD'] === 'GET' && $path === '/api/cron/send-reminders') {
 
+    // ============ CONFIGURATION (REAL CREDENTIALS) ============
+    $emailUsername = 'kaletamene90@gmail.com';
+    $emailPassword = 'qgqs vlfz hbre idsn';   // Your Gmail App Password
+    $clinicName    = 'Menatabiya Health Center';
+    $clinicAddress = 'Debre Birhan, Menatabiya, Kebele 04';
+    // =========================================================
 
+    $totalSent = 0;
+
+    // ---------- 3-DAY REMINDER ----------
+    $in3days = date('Y-m-d', strtotime('+3 days'));
+    $stmt = $pdo->prepare("
+        SELECT a.id AS appt_id, a.scheduled_date, c.name AS child_name,
+               u.email AS parent_email, u.phone AS parent_phone, v.name AS vaccine_name
+        FROM appointments a
+        JOIN children c ON a.child_id = c.id
+        JOIN users u ON c.parent_id = u.id
+        JOIN vaccines v ON a.vaccine_id = v.id
+        WHERE a.scheduled_date = ? AND a.status = 'pending'
+          AND a.id NOT IN (SELECT appointment_id FROM sent_notifications WHERE notification_type = 'reminder_3day')
+    ");
+    $stmt->execute([$in3days]);
+    $threeDayAppts = $stmt->fetchAll();
+
+    foreach ($threeDayAppts as $appt) {
+        // ----- REAL EMAIL -----
+        try {
+            $mail = new PHPMailer(true);
+            $mail->CharSet = 'UTF-8';
+            $mail->isSMTP();
+            $mail->Host       = 'smtp.gmail.com';
+            $mail->SMTPAuth   = true;
+            $mail->Username   = $emailUsername;
+            $mail->Password   = $emailPassword;
+            $mail->SMTPSecure = 'tls';
+            $mail->Port       = 587;
+            $mail->setFrom($emailUsername, $clinicName);
+            $mail->addAddress($appt['parent_email']);
+            $mail->isHTML(true);
+            $mail->Subject = "Vaccination Reminder - {$appt['child_name']}";
+            $mail->Body    = "
+                <div style='font-family:Arial,sans-serif;max-width:600px;margin:0 auto;padding:20px;border:1px solid #ddd;border-radius:10px;'>
+                    <h3 style='color:#1a5276;'>$clinicName</h3>
+                    <p>Dear Parent,</p>
+                    <p>Your child <strong>{$appt['child_name']}</strong> has a <strong>{$appt['vaccine_name']}</strong> vaccination on <strong>{$appt['scheduled_date']}</strong>.</p>
+                    <p>Location: $clinicAddress</p>
+                    <p>Please bring the vaccination card.</p>
+                </div>";
+            $mail->send();
+
+            $pdo->prepare("INSERT INTO sent_notifications (appointment_id, notification_type, channel, sent_to, content, status)
+                           VALUES (?, 'reminder_3day', 'email', ?, ?, 'sent')")
+                ->execute([$appt['appt_id'], $appt['parent_email'], $mail->Body]);
+            $totalSent++;
+        } catch (Exception $e) {
+            $pdo->prepare("INSERT INTO sent_notifications (appointment_id, notification_type, channel, sent_to, content, status, error_message)
+                           VALUES (?, 'reminder_3day', 'email', ?, ?, 'failed', ?)")
+                ->execute([$appt['appt_id'], $appt['parent_email'], '', $e->getMessage()]);
+        }
+
+        // Log SMS as simulated
+        $pdo->prepare("INSERT INTO sent_notifications (appointment_id, notification_type, channel, sent_to, content, status)
+                       VALUES (?, 'reminder_3day', 'sms', ?, ?, 'sent')")
+            ->execute([$appt['appt_id'], $appt['parent_phone'], "Reminder SMS"]);
+    }
+
+    // ---------- DAY-OF REMINDER ----------
+    $today = date('Y-m-d');
+    $stmt = $pdo->prepare("
+        SELECT a.id AS appt_id, a.scheduled_date, c.name AS child_name,
+               u.email AS parent_email, u.phone AS parent_phone, v.name AS vaccine_name
+        FROM appointments a
+        JOIN children c ON a.child_id = c.id
+        JOIN users u ON c.parent_id = u.id
+        JOIN vaccines v ON a.vaccine_id = v.id
+        WHERE a.scheduled_date = ? AND a.status = 'pending'
+          AND a.id NOT IN (SELECT appointment_id FROM sent_notifications WHERE notification_type = 'reminder_dayof')
+    ");
+    $stmt->execute([$today]);
+    $todayAppts = $stmt->fetchAll();
+
+    foreach ($todayAppts as $appt) {
+        // ----- REAL EMAIL -----
+        try {
+            $mail = new PHPMailer(true);
+            $mail->CharSet = 'UTF-8';
+            $mail->isSMTP();
+            $mail->Host       = 'smtp.gmail.com';
+            $mail->SMTPAuth   = true;
+            $mail->Username   = $emailUsername;
+            $mail->Password   = $emailPassword;
+            $mail->SMTPSecure = 'tls';
+            $mail->Port       = 587;
+            $mail->setFrom($emailUsername, $clinicName);
+            $mail->addAddress($appt['parent_email']);
+            $mail->isHTML(true);
+            $mail->Subject = "APPOINTMENT TODAY - {$appt['child_name']}";
+            $mail->Body    = "
+                <div style='font-family:Arial,sans-serif;max-width:600px;margin:0 auto;padding:20px;border:2px solid #e74c3c;border-radius:10px;'>
+                    <h3 style='color:#e74c3c;'>📅 APPOINTMENT TODAY</h3>
+                    <p>Dear Parent,</p>
+                    <p>Your child <strong>{$appt['child_name']}</strong> has a <strong>{$appt['vaccine_name']}</strong> vaccination <strong>TODAY ({$appt['scheduled_date']})</strong>.</p>
+                    <p>Location: $clinicAddress</p>
+                    <p>Please come now!</p>
+                </div>";
+            $mail->send();
+
+            $pdo->prepare("INSERT INTO sent_notifications (appointment_id, notification_type, channel, sent_to, content, status)
+                           VALUES (?, 'reminder_dayof', 'email', ?, ?, 'sent')")
+                ->execute([$appt['appt_id'], $appt['parent_email'], $mail->Body]);
+            $totalSent++;
+        } catch (Exception $e) {
+            $pdo->prepare("INSERT INTO sent_notifications (appointment_id, notification_type, channel, sent_to, content, status, error_message)
+                           VALUES (?, 'reminder_dayof', 'email', ?, ?, 'failed', ?)")
+                ->execute([$appt['appt_id'], $appt['parent_email'], '', $e->getMessage()]);
+        }
+
+        // Log SMS as simulated
+        $pdo->prepare("INSERT INTO sent_notifications (appointment_id, notification_type, channel, sent_to, content, status)
+                       VALUES (?, 'reminder_dayof', 'sms', ?, ?, 'sent')")
+            ->execute([$appt['appt_id'], $appt['parent_phone'], "Day-of SMS"]);
+    }
+
+    echo json_encode(["success" => true, "message" => "Reminders processed. $totalSent emails sent successfully."]);
+    exit;
+}
+
+if ($_SERVER['REQUEST_METHOD'] === 'GET' && $path === '/api/parent/notification-history') {
+    $parentId = isset($_GET['parent_id']) ? (int)$_GET['parent_id'] : 0;
+    $stmt = $pdo->prepare("
+        SELECT sn.*, a.scheduled_date, v.name AS vaccine_name, c.name AS child_name
+        FROM sent_notifications sn
+        JOIN appointments a ON sn.appointment_id = a.id
+        JOIN children c ON a.child_id = c.id
+        JOIN vaccines v ON a.vaccine_id = v.id
+        WHERE c.parent_id = ?
+        ORDER BY sn.sent_at DESC
+        LIMIT 50
+    ");
+    $stmt->execute([$parentId]);
+    echo json_encode(["success" => true, "data" => $stmt->fetchAll(PDO::FETCH_ASSOC)]);
+    exit;
+}
+
+// ==================== PARENT REQUEST RESCHEDULE ====================
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && preg_match('#^/api/parent/appointment/(\d+)/reschedule$#', $path, $m)) {
+    $appointmentId = $m[1];
+    $input = json_decode(file_get_contents('php://input'), true);
+    $newDate = $input['new_date'] ?? '';
+
+    if (!$newDate || strtotime($newDate) < strtotime(date('Y-m-d'))) {
+        http_response_code(400);
+        echo json_encode(["success" => false, "message" => "Valid future date required"]);
+        exit;
+    }
+
+    // Get appointment
+    $stmt = $pdo->prepare("SELECT * FROM appointments WHERE id = ? AND status = 'pending'");
+    $stmt->execute([$appointmentId]);
+    $appt = $stmt->fetch();
+    if (!$appt) {
+        http_response_code(404);
+        echo json_encode(["success" => false, "message" => "Appointment not found or not pending"]);
+        exit;
+    }
+
+    // Check max 5 days difference
+    $original = new DateTime($appt['scheduled_date']);
+    $requested = new DateTime($newDate);
+    $diff = $original->diff($requested)->days;
+    if ($diff > 5) {
+        http_response_code(400);
+        echo json_encode(["success" => false, "message" => "You can only reschedule within 5 days of the original date"]);
+        exit;
+    }
+
+    // Save reschedule request
+    $pdo->prepare("UPDATE appointments SET reschedule_request_date = ?, status = 'rescheduled' WHERE id = ?")
+        ->execute([$newDate, $appointmentId]);
+
+    audit_log($pdo, $appt['child_id'], 'RESCHEDULE_REQUEST', "Appointment ID: $appointmentId, New date: $newDate");
+    echo json_encode(["success" => true, "message" => "Reschedule request submitted. Waiting for nurse approval."]);
+    exit;
+}
+// ==================== NURSE APPROVE/REJECT RESCHEDULE ====================
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && preg_match('#^/api/nurse/appointment/(\d+)/approve-reschedule$#', $path, $m)) {
+    $apptId = $m[1];
+    $input = json_decode(file_get_contents('php://input'), true);
+    $approved = $input['approved'] ?? false;
+
+    if ($approved) {
+        $pdo->prepare("UPDATE appointments SET scheduled_date = reschedule_request_date, reschedule_request_date = NULL, status = 'pending' WHERE id = ? AND status = 'rescheduled'")
+            ->execute([$apptId]);
+    } else {
+        $pdo->prepare("UPDATE appointments SET reschedule_request_date = NULL, status = 'pending' WHERE id = ? AND status = 'rescheduled'")
+            ->execute([$apptId]);
+    }
+
+    audit_log($pdo, 1, $approved ? 'APPROVE_RESCHEDULE' : 'REJECT_RESCHEDULE', "Appointment ID: $apptId");
+    echo json_encode(["success" => true, "message" => $approved ? "Reschedule approved" : "Reschedule rejected"]);
+    exit;
+}
+if ($_SERVER['REQUEST_METHOD'] === 'GET' && $path === '/api/appointments/pending-reschedules') {
+    $nurseId = isset($_GET['nurse_id']) ? (int)$_GET['nurse_id'] : 0;
+    $stmt = $pdo->prepare("
+        SELECT a.*, c.name AS child_name, v.name AS vaccine_name
+        FROM appointments a
+        JOIN children c ON a.child_id = c.id
+        JOIN vaccines v ON a.vaccine_id = v.id
+        JOIN nurse_assignments na ON c.id = na.child_id AND na.nurse_id = ?
+        WHERE a.status = 'rescheduled'
+        ORDER BY a.reschedule_request_date ASC
+    ");
+    $stmt->execute([$nurseId]);
+    echo json_encode(["success" => true, "data" => $stmt->fetchAll(PDO::FETCH_ASSOC)]);
+    exit;
+}
 // ==================== CATCH-ALL ====================
 if (strpos($path, '/api/') === 0) {
     echo json_encode(["success" => true, "message" => "Demo endpoint – implement later"]);
