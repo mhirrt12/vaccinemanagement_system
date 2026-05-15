@@ -149,7 +149,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET' && $path === '/api/parent/children') {
         FROM children c
         LEFT JOIN nurse_assignments na ON c.id = na.child_id
         LEFT JOIN users u ON na.nurse_id = u.id
-        WHERE c.parent_id = ? AND c.status = 'approved'
+        WHERE c.parent_id = ?
         ORDER BY c.created_at DESC
     ");
     $stmt->execute([$parentId]);
@@ -1151,6 +1151,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET' && $path === '/api/nurse/my-children') 
     $stmt = $pdo->prepare("
         SELECT c.*, u.name AS parent_name, u.phone AS parent_phone,
                (SELECT COUNT(*) FROM appointments WHERE child_id = c.id AND status = 'completed') AS vaccines_given,
+               (SELECT COUNT(*) FROM appointments WHERE child_id = c.id AND status = 'missed') AS missed_count,
                (SELECT COUNT(*) FROM appointments WHERE child_id = c.id) AS total_appointments
         FROM children c
         JOIN nurse_assignments na ON c.id = na.child_id AND na.nurse_id = ?
@@ -1757,6 +1758,20 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET' && $path === '/api/appointments/pending
     ");
     $stmt->execute([$nurseId]);
     echo json_encode(["success" => true, "data" => $stmt->fetchAll(PDO::FETCH_ASSOC)]);
+    exit;
+}
+
+// ==================== MARK MISSED APPOINTMENTS ====================
+if ($_SERVER['REQUEST_METHOD'] === 'GET' && $path === '/api/cron/mark-missed') {
+    $stmt = $pdo->prepare("
+        UPDATE appointments 
+        SET status = 'missed' 
+        WHERE status = 'pending' AND scheduled_date < CURDATE()
+    ");
+    $stmt->execute();
+    $missedCount = $stmt->rowCount();
+
+    echo json_encode(["success" => true, "message" => "Marked $missedCount appointments as missed"]);
     exit;
 }
 // ==================== CATCH-ALL ====================
